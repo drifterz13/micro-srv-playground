@@ -8,6 +8,7 @@
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "format": "turbo run format",
+    "dev": "turbo run start:dev",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

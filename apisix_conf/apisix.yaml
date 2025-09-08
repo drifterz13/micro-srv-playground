@@ -1,0 +1,13 @@
+routes:
+  - id: 1
+    uri: /api/contents/*
+    upstream:
+      type: roundrobin
+      nodes:
+        content:3000: 1
+    plugins:
+      proxy-rewrite:
+        regex_uri:
+          - ^/api/contents/(.*)
+          - /contents/$1
+#END
