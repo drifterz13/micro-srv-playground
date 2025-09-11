@@ -1,6 +1,20 @@
+plugin_configs:
+  - id: oidc-config
+    plugins:
+      openid-connect:
+        bearer_only: false
+        use_pkce: true
+        client_id: "mcr-client"
+        client_secret: "EwalFQZwJjXsCkuD4Aah9oNefpirFkVt"
+        discovery: "http://keycloak:8080/realms/mcr-realm/.well-known/openid-configuration"
+        scope: openid profile
+        redirect_uri: "http://localhost:9080/api/callback"
+        session:
+          secret: "ZyHV1f45ddSqDK1EfVX3R27dj195ZwM6"
+
 routes:
-  - id: 1
-    uri: /api/contents/*
+  - id: api-routes
+    uri: /api/*
     upstream:
       type: roundrobin
       nodes:
@@ -8,6 +22,7 @@ routes:
     plugins:
       proxy-rewrite:
         regex_uri:
-          - ^/api/contents/(.*)
-          - /contents/$1
+          - ^/api/(.*)
+          - /$1
+    plugin_config_id: oidc-config
 #END

@@ -11,4 +11,9 @@ export class ContentsController {
   async getTestContents() {
     return "This is test contents";
   }
+
+  @Get("/callback")
+  async authCallback() {
+    return "This is callback"
+  }
 }
