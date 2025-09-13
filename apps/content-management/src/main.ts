@@ -7,6 +7,10 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     logger: ["log", "warn", "error"],
   });
+  app.enableCors({
+    origin: "http://localhost:3000",
+  });
+
   const config = new DocumentBuilder()
     .setTitle("Content Management API")
     .setDescription("The contents API description")
