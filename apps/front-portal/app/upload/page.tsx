@@ -9,9 +9,19 @@ interface UploadStatus {
   success: boolean;
 }
 
+interface ContentCreationResult {
+  id: string;
+  key: string;
+  contentType: string;
+}
+
+type ContentType = "image" | "video" | "file";
+
 export default function UploadPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [contentType, setContentType] = useState<ContentType | null>(null);
+  const [createdContent, setCreatedContent] = useState<ContentCreationResult | null>(null);
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>({
     uploading: false,
     progress: 0,
@@ -22,6 +32,21 @@ export default function UploadPage() {
 
   const isImageFile = (file: File): boolean => {
     return file.type.startsWith("image/");
+  };
+
+  const isVideoFile = (file: File): boolean => {
+    return file.type.startsWith("video/");
+  };
+
+  const isPdfFile = (file: File): boolean => {
+    return file.type === "application/pdf";
+  };
+
+  const detectContentType = (file: File): ContentType => {
+    if (isImageFile(file)) return "image";
+    if (isVideoFile(file)) return "video";
+    if (isPdfFile(file)) return "file"; // PDF maps to "file" type
+    return "file"; // Default to "file" for other types
   };
 
   const createPreviewUrl = (file: File) => {
@@ -47,6 +72,8 @@ export default function UploadPage() {
       const file = e.target.files[0];
       setSelectedFile(file);
       createPreviewUrl(file);
+      setContentType(detectContentType(file));
+      setCreatedContent(null);
       setUploadStatus({
         uploading: false,
         progress: 0,
@@ -58,12 +85,48 @@ export default function UploadPage() {
 
   const getPresignedUrl = async (): Promise<string> => {
     const response = await fetch(
-      "http://localhost:4000/contents/upload/presigned",
+      "http://localhost:4000/upload/presigned",
     );
     if (!response.ok) {
       throw new Error("Failed to get presigned URL");
     }
     return response.text();
+  };
+
+  const extractFileKeyFromUrl = (presignedUrl: string): string => {
+    try {
+      const url = new URL(presignedUrl);
+      const pathSegments = url.pathname.split('/');
+      // The file key (UUID) should be the last segment of the path
+      const fileKey = pathSegments[pathSegments.length - 1];
+
+      if (!fileKey) {
+        throw new Error("Could not extract file key from presigned URL");
+      }
+
+      return fileKey;
+    } catch (error) {
+      throw new Error("Invalid presigned URL format");
+    }
+  };
+
+  const createContent = async (key: string, contentType: ContentType): Promise<ContentCreationResult> => {
+    const response = await fetch("http://localhost:4000/contents", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        key,
+        contentType,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to create content record");
+    }
+
+    return response.json();
   };
 
   const uploadToMinio = async (
@@ -99,7 +162,7 @@ export default function UploadPage() {
   };
 
   const handleUpload = async () => {
-    if (!selectedFile) return;
+    if (!selectedFile || !contentType) return;
 
     setUploadStatus({
       uploading: true,
@@ -109,9 +172,18 @@ export default function UploadPage() {
     });
 
     try {
+      // Step 1: Get presigned URL
       const presignedUrl = await getPresignedUrl();
+
+      // Step 2: Upload file to Minio
       await uploadToMinio(selectedFile, presignedUrl);
 
+      // Step 3: Extract file key and create content record
+      const fileKey = extractFileKeyFromUrl(presignedUrl);
+      const createdContentResult = await createContent(fileKey, contentType);
+
+      // Step 4: Update state with success
+      setCreatedContent(createdContentResult);
       setUploadStatus({
         uploading: false,
         progress: 100,
@@ -134,6 +206,8 @@ export default function UploadPage() {
     }
     setSelectedFile(null);
     setPreviewUrl(null);
+    setContentType(null);
+    setCreatedContent(null);
     setUploadStatus({
       uploading: false,
       progress: 0,
@@ -270,6 +344,61 @@ export default function UploadPage() {
               </div>
             </div>
 
+            {/* Content Type Selection */}
+            <div className="bg-gray-50 rounded-lg p-4">
+              <h3 className="text-sm font-medium text-gray-900 mb-3">Content Type</h3>
+              <div className="space-y-2">
+                <div className="flex items-center space-x-3">
+                  <input
+                    id="content-type-image"
+                    name="content-type"
+                    type="radio"
+                    value="image"
+                    checked={contentType === "image"}
+                    onChange={(e) => setContentType(e.target.value as ContentType)}
+                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                    disabled={uploadStatus.uploading}
+                  />
+                  <label htmlFor="content-type-image" className="text-sm text-gray-700">
+                    📸 Image
+                  </label>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <input
+                    id="content-type-video"
+                    name="content-type"
+                    type="radio"
+                    value="video"
+                    checked={contentType === "video"}
+                    onChange={(e) => setContentType(e.target.value as ContentType)}
+                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                    disabled={uploadStatus.uploading}
+                  />
+                  <label htmlFor="content-type-video" className="text-sm text-gray-700">
+                    🎥 Video
+                  </label>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <input
+                    id="content-type-file"
+                    name="content-type"
+                    type="radio"
+                    value="file"
+                    checked={contentType === "file"}
+                    onChange={(e) => setContentType(e.target.value as ContentType)}
+                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                    disabled={uploadStatus.uploading}
+                  />
+                  <label htmlFor="content-type-file" className="text-sm text-gray-700">
+                    📄 File/Document
+                  </label>
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                Auto-detected: <strong>{contentType}</strong> (you can override)
+              </p>
+            </div>
+
             {uploadStatus.uploading && (
               <div className="space-y-2">
                 <div className="flex justify-between text-sm text-gray-600">
@@ -307,10 +436,10 @@ export default function UploadPage() {
             )}
 
             {uploadStatus.success && (
-              <div className="bg-green-50 border border-green-200 rounded-md p-3">
-                <div className="flex">
+              <div className="bg-green-50 border border-green-200 rounded-md p-4">
+                <div className="flex items-start">
                   <svg
-                    className="h-5 w-5 text-green-400"
+                    className="h-5 w-5 text-green-400 mt-0.5"
                     fill="currentColor"
                     viewBox="0 0 20 20"
                   >
@@ -320,9 +449,18 @@ export default function UploadPage() {
                       clipRule="evenodd"
                     />
                   </svg>
-                  <p className="ml-2 text-sm text-green-700">
-                    File uploaded successfully!
-                  </p>
+                  <div className="ml-2">
+                    <p className="text-sm font-medium text-green-800">
+                      Content uploaded and created successfully!
+                    </p>
+                    {createdContent && (
+                      <div className="mt-2 text-sm text-green-700">
+                        <p><strong>Content ID:</strong> {createdContent.id}</p>
+                        <p><strong>File Key:</strong> {createdContent.key}</p>
+                        <p><strong>Type:</strong> {createdContent.contentType}</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -330,10 +468,10 @@ export default function UploadPage() {
             <div className="flex space-x-3">
               <button
                 onClick={handleUpload}
-                disabled={uploadStatus.uploading || uploadStatus.success}
+                disabled={uploadStatus.uploading || uploadStatus.success || !contentType}
                 className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {uploadStatus.uploading ? "Uploading..." : "Upload File"}
+                {uploadStatus.uploading ? "Uploading..." : "Upload & Create Content"}
               </button>
               {uploadStatus.success && (
                 <button

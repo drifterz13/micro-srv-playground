@@ -15,11 +15,25 @@ export class UploadService implements IUploader {
     private config: ConfigType<typeof uploadConfig>,
   ) {}
 
+  private get defaultPresignedUrlTTL() {
+    return 600; // 600s or 10m
+  }
+
   async getPutPresignedUrl(): Promise<string> {
     const presignedUrl = await this.minioClient.presignedPutObject(
       this.config.minioBucketName,
       crypto.randomUUID(),
-      600, // 600s or 10m
+      this.defaultPresignedUrlTTL,
+    );
+
+    return presignedUrl;
+  }
+
+  async getDownloadPresignedUrl(objectKey: string): Promise<string> {
+    const presignedUrl = await this.minioClient.presignedGetObject(
+      this.config.minioBucketName,
+      objectKey,
+      this.defaultPresignedUrlTTL,
     );
 
     return presignedUrl;
