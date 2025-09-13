@@ -2,7 +2,7 @@ import { IsNumberString, IsString, validateSync } from "class-validator";
 import { registerAs } from "@nestjs/config";
 import { plainToInstance } from "class-transformer";
 
-class UploadsConfig {
+class UploadConfig {
   @IsString()
   minioAccessKey: string;
 
@@ -22,7 +22,7 @@ class UploadsConfig {
 const UPLOAD_CONFIG_TOKEN = "UPLOAD_CONFIG_TOKEN";
 
 export default registerAs(UPLOAD_CONFIG_TOKEN, async () => {
-  const config = plainToInstance(UploadsConfig, {
+  const config = plainToInstance(UploadConfig, {
     minioAccessKey: process.env.MINIO_ACCESS_KEY,
     minioSecretKey: process.env.MINIO_SECRET_KEY,
     minioEndpoint: process.env.MINIO_ENDPOINT,
