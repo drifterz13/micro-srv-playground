@@ -18,4 +18,4 @@ COPY apps/content-management apps/content-management/
 
 EXPOSE 3000
 WORKDIR /app/apps/content-management
-CMD [ "pnpm", "start:dev" ]
+CMD [ "pnpm", "exec", "nest", "start", "--watch" ]
