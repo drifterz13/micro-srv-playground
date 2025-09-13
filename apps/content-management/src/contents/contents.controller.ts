@@ -12,7 +12,7 @@ export class ContentsController {
   @ApiOperation({ summary: "Get all contents" })
   @ApiResponse({ status: HttpStatus.OK })
   async getContents() {
-    return "This is contents";
+    return this.contentSrv.getAllContents();
   }
 
   @Post()

@@ -27,4 +27,12 @@ export class ContentsService {
       },
     });
   }
+
+  async getAllContents() {
+    return this.prisma.content.findMany({
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+  }
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
+import Link from "next/link";
 
 interface UploadStatus {
   uploading: boolean;
@@ -227,11 +228,24 @@ export default function UploadPage() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   };
 
+  const getCdnUrl = (key: string): string => {
+    return `http://localhost:8090/content/${key}`;
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md mx-auto bg-white rounded-lg shadow-md p-6">
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">Upload File</h1>
+          <div className="flex items-center justify-between mb-4">
+            <div></div>
+            <h1 className="text-2xl font-bold text-gray-900">Upload File</h1>
+            <Link
+              href="/contents"
+              className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+            >
+              View Gallery →
+            </Link>
+          </div>
           <p className="text-gray-600">Select a file to upload to storage</p>
         </div>
 
@@ -454,10 +468,44 @@ export default function UploadPage() {
                       Content uploaded and created successfully!
                     </p>
                     {createdContent && (
-                      <div className="mt-2 text-sm text-green-700">
-                        <p><strong>Content ID:</strong> {createdContent.id}</p>
-                        <p><strong>File Key:</strong> {createdContent.key}</p>
-                        <p><strong>Type:</strong> {createdContent.contentType}</p>
+                      <div className="mt-3 space-y-3">
+                        <div className="text-sm text-green-700 space-y-1">
+                          <p><strong>Content ID:</strong> {createdContent.id}</p>
+                          <p><strong>Type:</strong> {createdContent.contentType}</p>
+                        </div>
+                        <div className="bg-green-100 border border-green-300 rounded p-3">
+                          <p className="text-sm font-medium text-green-800 mb-1">CDN URL:</p>
+                          <div className="flex items-center space-x-2">
+                            <input
+                              type="text"
+                              value={getCdnUrl(createdContent.key)}
+                              readOnly
+                              className="flex-1 text-xs bg-white border border-green-300 rounded px-2 py-1 text-green-700 font-mono"
+                            />
+                            <button
+                              onClick={() => navigator.clipboard.writeText(getCdnUrl(createdContent.key))}
+                              className="text-xs bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700"
+                            >
+                              Copy
+                            </button>
+                          </div>
+                        </div>
+                        <div className="flex space-x-2">
+                          <a
+                            href={getCdnUrl(createdContent.key)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex-1 bg-green-600 text-white text-center py-2 px-3 rounded text-sm hover:bg-green-700"
+                          >
+                            View File
+                          </a>
+                          <Link
+                            href="/contents"
+                            className="flex-1 bg-blue-600 text-white text-center py-2 px-3 rounded text-sm hover:bg-blue-700"
+                          >
+                            View Gallery
+                          </Link>
+                        </div>
                       </div>
                     )}
                   </div>
