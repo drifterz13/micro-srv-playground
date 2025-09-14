@@ -1,0 +1,1 @@
+export const MINIO_CLIENT_TOKEN = "MINIO_CLIENT_TOKEN";
