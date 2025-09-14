@@ -59,7 +59,7 @@ export class TranscoderService {
     objectName: string,
   ): Promise<{ resolution: string; outputKey: string; etag: string }> {
     return new Promise((resolve, reject) => {
-      const outputStream = new PassThrough();
+      const passThroughStream = new PassThrough();
 
       const objectKey = objectName.split(".")[0]; // Eg. 1cfd6390-4144-4a1b-a79c-411d7eff02d2.mp4
       const outputKey = `${this.keyPrefix}${objectKey}_${resolution.name}.mp4`;
@@ -67,8 +67,8 @@ export class TranscoderService {
       let uploadPromise: Promise<{ etag: string; versionId?: string }>;
 
       const cleanup = (error?: Error) => {
-        if (!outputStream.destroyed) {
-          outputStream.destroy(error);
+        if (!passThroughStream.destroyed) {
+          passThroughStream.destroy(error);
         }
       };
 
@@ -93,7 +93,7 @@ export class TranscoderService {
           console.log(`${resolution.name} started: ${commandLine}`);
           uploadPromise = this.uploaderSrv.putObject(
             outputKey,
-            outputStream,
+            passThroughStream,
             "video/mp4",
           );
         })
@@ -107,7 +107,7 @@ export class TranscoderService {
           reject(err);
         })
         .on("end", async () => {
-          outputStream.end();
+          passThroughStream.end();
 
           try {
             const { etag } = await uploadPromise;
@@ -124,9 +124,9 @@ export class TranscoderService {
             reject(uploadErr);
           }
         })
-        .pipe(outputStream, { end: false });
+        .pipe(passThroughStream, { end: false });
 
-      outputStream.on("error", (err) => {
+      passThroughStream.on("error", (err) => {
         cleanup(err);
         reject(err);
       });
