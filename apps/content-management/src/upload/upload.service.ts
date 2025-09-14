@@ -19,7 +19,7 @@ export class UploadService implements IUploader {
     return 600; // 600s or 10m
   }
 
-  async getPutPresignedUrl(): Promise<string> {
+  async getPresignedUrl(): Promise<string> {
     const presignedUrl = await this.minioClient.presignedPutObject(
       this.config.minioBucketName,
       crypto.randomUUID(),
@@ -37,5 +37,64 @@ export class UploadService implements IUploader {
     );
 
     return presignedUrl;
+  }
+
+  async createMultipartUpload(
+    objectName: string,
+    contentType?: string,
+  ): Promise<{ uploadId: string; objectName: string }> {
+    const uploadId = await this.minioClient.initiateNewMultipartUpload(
+      this.config.minioBucketName,
+      objectName,
+      contentType ? { "Content-Type": contentType } : {},
+    );
+
+    return {
+      uploadId,
+      objectName,
+    };
+  }
+
+  async getPresignedUrlForPart(
+    uploadId: string,
+    objectName: string,
+    part: number,
+  ): Promise<string> {
+    const presignedUrl = await this.minioClient.presignedUrl(
+      "PUT",
+      this.config.minioBucketName,
+      objectName,
+      this.defaultPresignedUrlTTL,
+      {
+        uploadId: uploadId,
+        partNumber: String(part),
+      },
+    );
+
+    return presignedUrl;
+  }
+
+  async completeMultipartUpload(
+    uploadId: string,
+    objectName: string,
+    parts: { partNumber: number; etag: string }[],
+  ): ReturnType<IUploader["completeMultipartUpload"]> {
+    if (!parts || parts.length === 0) {
+      throw new Error("No parts provided");
+    }
+
+    const sortedParts = parts
+      .sort((a, b) => a.partNumber - b.partNumber)
+      .map((part) => ({
+        part: part.partNumber,
+        etag: part.etag,
+      }));
+
+    return this.minioClient.completeMultipartUpload(
+      this.config.minioBucketName,
+      objectName,
+      uploadId,
+      sortedParts,
+    );
   }
 }

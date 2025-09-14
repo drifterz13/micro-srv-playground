@@ -10,6 +10,13 @@ interface UploadStatus {
   success: boolean;
 }
 
+interface PartProgress {
+  partNumber: number;
+  status: 'pending' | 'uploading' | 'completed' | 'error';
+  progress: number;
+  etag?: string;
+}
+
 interface ContentCreationResult {
   id: string;
   key: string;
@@ -29,7 +36,13 @@ export default function UploadPage() {
     error: null,
     success: false,
   });
+  const [partProgress, setPartProgress] = useState<PartProgress[]>([]);
+  const [isMultipartUpload, setIsMultipartUpload] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Constants for multipart upload
+  const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+  const MIN_MULTIPART_SIZE = 10 * 1024 * 1024; // 10MB minimum for multipart
 
   const isImageFile = (file: File): boolean => {
     return file.type.startsWith("image/");
@@ -51,7 +64,7 @@ export default function UploadPage() {
   };
 
   const createPreviewUrl = (file: File) => {
-    if (isImageFile(file)) {
+    if (isImageFile(file) || isVideoFile(file)) {
       const url = URL.createObjectURL(file);
       setPreviewUrl(url);
       return url;
@@ -81,6 +94,26 @@ export default function UploadPage() {
         error: null,
         success: false,
       });
+
+      // Determine if we need multipart upload
+      const needsMultipart = file.size > MIN_MULTIPART_SIZE;
+      setIsMultipartUpload(needsMultipart);
+
+      // Initialize part progress for multipart uploads
+      if (needsMultipart) {
+        const totalParts = Math.ceil(file.size / CHUNK_SIZE);
+        const parts: PartProgress[] = [];
+        for (let i = 1; i <= totalParts; i++) {
+          parts.push({
+            partNumber: i,
+            status: 'pending',
+            progress: 0,
+          });
+        }
+        setPartProgress(parts);
+      } else {
+        setPartProgress([]);
+      }
     }
   };
 
@@ -162,6 +195,185 @@ export default function UploadPage() {
     });
   };
 
+  const createMultipartUpload = async (objectName: string, contentType: string): Promise<{uploadId: string, objectName: string}> => {
+    const response = await fetch("http://localhost:4000/upload/multipart", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        objectName,
+        contentType,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to create multipart upload");
+    }
+
+    return response.json();
+  };
+
+  const getPresignedUrlForPart = async (
+    uploadId: string,
+    objectName: string,
+    partNumber: number
+  ): Promise<string> => {
+    const params = new URLSearchParams({
+      uploadId,
+      objectName,
+      part: partNumber.toString(),
+    });
+
+    const response = await fetch(
+      `http://localhost:4000/upload/multipart/presigned?${params}`
+    );
+
+    if (!response.ok) {
+      throw new Error(`Failed to get presigned URL for part ${partNumber}`);
+    }
+
+    return response.text();
+  };
+
+  const uploadPart = async (
+    chunk: Blob,
+    presignedUrl: string,
+    partNumber: number
+  ): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+
+      xhr.upload.addEventListener("progress", (e) => {
+        if (e.lengthComputable) {
+          const progress = Math.round((e.loaded / e.total) * 100);
+          setPartProgress((prev) =>
+            prev.map((p) =>
+              p.partNumber === partNumber
+                ? { ...p, progress, status: 'uploading' as const }
+                : p
+            )
+          );
+        }
+      });
+
+      xhr.addEventListener("load", () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          const etag = xhr.getResponseHeader("ETag");
+          if (etag) {
+            setPartProgress((prev) =>
+              prev.map((p) =>
+                p.partNumber === partNumber
+                  ? { ...p, progress: 100, status: 'completed' as const, etag: etag.replace(/"/g, '') }
+                  : p
+              )
+            );
+            resolve(etag.replace(/"/g, ''));
+          } else {
+            reject(new Error(`No ETag received for part ${partNumber}`));
+          }
+        } else {
+          setPartProgress((prev) =>
+            prev.map((p) =>
+              p.partNumber === partNumber
+                ? { ...p, status: 'error' as const }
+                : p
+            )
+          );
+          reject(new Error(`Upload failed for part ${partNumber} with status: ${xhr.status}`));
+        }
+      });
+
+      xhr.addEventListener("error", () => {
+        setPartProgress((prev) =>
+          prev.map((p) =>
+            p.partNumber === partNumber
+              ? { ...p, status: 'error' as const }
+              : p
+          )
+        );
+        reject(new Error(`Upload failed for part ${partNumber} due to network error`));
+      });
+
+      xhr.open("PUT", presignedUrl);
+      xhr.send(chunk);
+    });
+  };
+
+  const completeMultipartUpload = async (
+    uploadId: string,
+    objectName: string,
+    parts: { partNumber: number; etag: string }[]
+  ): Promise<any> => {
+    const response = await fetch("http://localhost:4000/upload/multipart/complete", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        uploadId,
+        objectName,
+        parts,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to complete multipart upload");
+    }
+
+    return response.json();
+  };
+
+  const performMultipartUpload = async (file: File): Promise<string> => {
+    // Step 1: Create multipart upload
+    const { uploadId, objectName } = await createMultipartUpload(
+      `${crypto.randomUUID()}.${file.name.split('.').pop()}`,
+      file.type
+    );
+
+    try {
+      // Step 2: Upload parts in parallel (but limit concurrency)
+      const totalParts = Math.ceil(file.size / CHUNK_SIZE);
+      const parts: { partNumber: number; etag: string }[] = [];
+      const CONCURRENT_UPLOADS = 3; // Limit concurrent uploads
+
+      for (let i = 0; i < totalParts; i += CONCURRENT_UPLOADS) {
+        const batch = [];
+
+        for (let j = i; j < Math.min(i + CONCURRENT_UPLOADS, totalParts); j++) {
+          const partNumber = j + 1;
+          const start = j * CHUNK_SIZE;
+          const end = Math.min(start + CHUNK_SIZE, file.size);
+          const chunk = file.slice(start, end);
+
+          const uploadPromise = (async () => {
+            const presignedUrl = await getPresignedUrlForPart(uploadId, objectName, partNumber);
+            const etag = await uploadPart(chunk, presignedUrl, partNumber);
+            return { partNumber, etag };
+          })();
+
+          batch.push(uploadPromise);
+        }
+
+        // Wait for this batch to complete
+        const batchResults = await Promise.all(batch);
+        parts.push(...batchResults);
+
+        // Update overall progress
+        const overallProgress = Math.round((parts.length / totalParts) * 100);
+        setUploadStatus((prev) => ({ ...prev, progress: overallProgress }));
+      }
+
+      // Step 3: Complete multipart upload
+      await completeMultipartUpload(uploadId, objectName, parts);
+
+      return objectName;
+    } catch (error) {
+      // TODO: Add abort multipart upload here
+      throw error;
+    }
+  };
+
   const handleUpload = async () => {
     if (!selectedFile || !contentType) return;
 
@@ -173,17 +385,27 @@ export default function UploadPage() {
     });
 
     try {
-      // Step 1: Get presigned URL
-      const presignedUrl = await getPresignedUrl();
+      let fileKey: string;
 
-      // Step 2: Upload file to Minio
-      await uploadToMinio(selectedFile, presignedUrl);
+      if (isMultipartUpload) {
+        // Use multipart upload for large files
+        fileKey = await performMultipartUpload(selectedFile);
+      } else {
+        // Use regular upload for small files
+        // Step 1: Get presigned URL
+        const presignedUrl = await getPresignedUrl();
 
-      // Step 3: Extract file key and create content record
-      const fileKey = extractFileKeyFromUrl(presignedUrl);
+        // Step 2: Upload file to Minio
+        await uploadToMinio(selectedFile, presignedUrl);
+
+        // Step 3: Extract file key
+        fileKey = extractFileKeyFromUrl(presignedUrl);
+      }
+
+      // Step 4: Create content record
       const createdContentResult = await createContent(fileKey, contentType);
 
-      // Step 4: Update state with success
+      // Step 5: Update state with success
       setCreatedContent(createdContentResult);
       setUploadStatus({
         uploading: false,
@@ -215,6 +437,8 @@ export default function UploadPage() {
       error: null,
       success: false,
     });
+    setPartProgress([]);
+    setIsMultipartUpload(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -287,11 +511,21 @@ export default function UploadPage() {
             {previewUrl && (
               <div className="bg-gray-50 rounded-lg p-4">
                 <div className="text-center">
-                  <img
-                    src={previewUrl}
-                    alt="Preview"
-                    className="mx-auto max-h-48 max-w-full rounded-lg shadow-sm"
-                  />
+                  {isImageFile(selectedFile) ? (
+                    <img
+                      src={previewUrl}
+                      alt="Preview"
+                      className="mx-auto max-h-48 max-w-full rounded-lg shadow-sm"
+                    />
+                  ) : isVideoFile(selectedFile) ? (
+                    <video
+                      src={previewUrl}
+                      controls
+                      className="mx-auto max-h-48 max-w-full rounded-lg shadow-sm"
+                    >
+                      Your browser does not support the video tag.
+                    </video>
+                  ) : null}
                 </div>
               </div>
             )}
@@ -413,10 +647,67 @@ export default function UploadPage() {
               </p>
             </div>
 
+            {/* File size and upload type info */}
+            {selectedFile && (
+              <div className="bg-blue-50 border border-blue-200 rounded-md p-3">
+                <div className="flex items-center space-x-2 text-sm text-blue-700">
+                  <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                  </svg>
+                  <span>
+                    File size: {formatFileSize(selectedFile.size)} •
+                    {isMultipartUpload ? ` Multipart upload (${Math.ceil(selectedFile.size / CHUNK_SIZE)} parts)` : ' Regular upload'}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Multipart upload progress */}
+            {uploadStatus.uploading && isMultipartUpload && partProgress.length > 0 && (
+              <div className="bg-gray-50 border border-gray-200 rounded-md p-4">
+                <div className="flex justify-between items-center mb-3">
+                  <span className="text-sm font-medium text-gray-700">Part Upload Progress</span>
+                  <span className="text-xs text-gray-500">
+                    {partProgress.filter(p => p.status === 'completed').length} / {partProgress.length} completed
+                  </span>
+                </div>
+                <div className="space-y-1 max-h-32 overflow-y-auto">
+                  {partProgress.map((part) => (
+                    <div key={part.partNumber} className="flex items-center space-x-2 text-xs">
+                      <span className="w-8 text-gray-500">#{part.partNumber}</span>
+                      <div className="flex-1 bg-gray-200 rounded-full h-1.5">
+                        <div
+                          className={`h-1.5 rounded-full transition-all duration-200 ${
+                            part.status === 'completed' ? 'bg-green-500' :
+                            part.status === 'uploading' ? 'bg-blue-500' :
+                            part.status === 'error' ? 'bg-red-500' :
+                            'bg-gray-300'
+                          }`}
+                          style={{ width: `${part.progress}%` }}
+                        />
+                      </div>
+                      <span className={`w-12 text-right ${
+                        part.status === 'completed' ? 'text-green-600' :
+                        part.status === 'uploading' ? 'text-blue-600' :
+                        part.status === 'error' ? 'text-red-600' :
+                        'text-gray-500'
+                      }`}>
+                        {part.status === 'completed' ? '✓' :
+                         part.status === 'uploading' ? `${part.progress}%` :
+                         part.status === 'error' ? '✗' :
+                         '⏸'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Overall upload progress */}
             {uploadStatus.uploading && (
               <div className="space-y-2">
                 <div className="flex justify-between text-sm text-gray-600">
-                  <span>Uploading...</span>
+                  <span>{isMultipartUpload ? 'Overall Progress...' : 'Uploading...'}</span>
                   <span>{uploadStatus.progress}%</span>
                 </div>
                 <div className="bg-gray-200 rounded-full h-2">
@@ -473,6 +764,21 @@ export default function UploadPage() {
                           <p><strong>Content ID:</strong> {createdContent.id}</p>
                           <p><strong>Type:</strong> {createdContent.contentType}</p>
                         </div>
+
+                        {/* Video preview for successful uploads */}
+                        {createdContent.contentType === 'video' && (
+                          <div className="bg-green-100 border border-green-300 rounded p-3">
+                            <p className="text-sm font-medium text-green-800 mb-2">Video Preview:</p>
+                            <video
+                              src={getCdnUrl(createdContent.key)}
+                              controls
+                              className="w-full max-h-40 rounded shadow-sm"
+                            >
+                              Your browser does not support the video tag.
+                            </video>
+                          </div>
+                        )}
+
                         <div className="bg-green-100 border border-green-300 rounded p-3">
                           <p className="text-sm font-medium text-green-800 mb-1">CDN URL:</p>
                           <div className="flex items-center space-x-2">

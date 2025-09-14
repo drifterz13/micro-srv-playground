@@ -189,6 +189,31 @@ export default function ContentsPage() {
                         target.nextElementSibling?.classList.remove('hidden');
                       }}
                     />
+                  ) : content.contentType === 'Video' ? (
+                    <div className="w-full h-full relative">
+                      <video
+                        src={getContentUrl(content.key)}
+                        className="w-full h-full object-cover"
+                        preload="metadata"
+                        onError={(e) => {
+                          const target = e.target as HTMLVideoElement;
+                          target.style.display = 'none';
+                          target.nextElementSibling?.classList.remove('hidden');
+                        }}
+                      />
+                      {/* Video play overlay */}
+                      <div className="absolute inset-0 bg-black bg-opacity-20 flex items-center justify-center">
+                        <div className="bg-white bg-opacity-90 rounded-full p-3">
+                          <svg className="w-8 h-8 text-gray-700" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
+                          </svg>
+                        </div>
+                      </div>
+                      {/* Fallback for failed videos */}
+                      <div className="hidden absolute inset-0 flex items-center justify-center text-6xl text-gray-400">
+                        {getContentTypeIcon(content.contentType)}
+                      </div>
+                    </div>
                   ) : (
                     <div className="text-6xl text-gray-400">
                       {getContentTypeIcon(content.contentType)}
