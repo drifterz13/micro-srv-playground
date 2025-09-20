@@ -1,11 +1,14 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import Stream, { PassThrough } from "node:stream";
 import { Resolution } from "./types";
 import * as ffmpeg from "fluent-ffmpeg";
 import { UploaderService } from "src/uploader/uploader.service";
+import { KafkaService } from "src/kafka/kafka.service";
 
 @Injectable()
-export class TranscoderService {
+export class TranscoderService implements OnModuleInit {
+  private readonly logger = new Logger(KafkaService.name);
+
   private resolutions: Resolution[] = [
     { name: "1080p", width: 1920, height: 1080, bitrate: "2000k" },
     { name: "720p", width: 1280, height: 720, bitrate: "1000k" },
@@ -14,7 +17,53 @@ export class TranscoderService {
 
   private keyPrefix = "transcoded/";
 
-  constructor(private uploaderSrv: UploaderService) {}
+  constructor(
+    private uploaderSrv: UploaderService,
+    private kafkaSrv: KafkaService,
+  ) {}
+
+  async onModuleInit() {
+    await this.subscribeToVideoRequests();
+  }
+
+  private async subscribeToVideoRequests() {
+    await this.kafkaSrv.subscribe(
+      "video.processing.requests",
+      async (message) => {
+        try {
+          const request = JSON.parse(message.value?.toString() || "{}");
+          this.logger.log(
+            `Processing video request for content ID: ${request.contentId}`,
+            request,
+          );
+
+          if (!request.metadata.objectKey) {
+            this.logger.error("Invalid request: missing objectKey");
+            return;
+          }
+
+          await this.transcode(request.metadata.objectKey);
+        } catch (error) {
+          this.logger.error("Error processing video request", error);
+        }
+      },
+    );
+  }
+
+  private async sendVideoProcessingComplete(objectKey: string, result: any) {
+    const message = {
+      objectKey,
+      result,
+      completedAt: new Date().toISOString(),
+      completedBy: "video-processor",
+    };
+
+    await this.kafkaSrv.sendMessage(
+      "video.processing.completed",
+      message,
+      objectKey,
+    );
+  }
 
   async transcode(objectName: string) {
     console.log(
@@ -51,6 +100,11 @@ export class TranscoderService {
     });
 
     await Promise.allSettled(transcodingPromises);
+
+    await this.sendVideoProcessingComplete(objectName, {
+      status: "completed",
+      processedAt: new Date().toISOString(),
+    });
   }
 
   private async processTranscoding(
