@@ -3,13 +3,15 @@ import { ContentsModule } from "./contents/contents.module";
 import { ConfigModule } from "@nestjs/config";
 import { UploadModule } from "./upload/upload.module";
 import { PersistenceModule } from "./persistence/persistence.module";
+import { KafkaModule } from "./kafka/kafka.module";
 
 @Module({
 	imports: [
-		ConfigModule.forRoot(),
+		ConfigModule.forRoot({ isGlobal: true }),
 		ContentsModule,
 		UploadModule,
 		PersistenceModule,
+		KafkaModule,
 	],
 	controllers: [],
 	providers: [],
